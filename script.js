@@ -32,6 +32,28 @@
   let bestScore = parseInt(localStorage.getItem(BEST_KEY) || '0', 10);
   bestScoreStartEl.textContent = bestScore;
 
+  // ---------- Custom image assets (optional — drop files into /assets) ----------
+  // If a file isn't there (or fails to load), the game quietly falls back to the
+  // built-in vector art, so it always runs even before you add anything.
+  const ASSET_PATHS = {
+    plane: 'assets/plane.png',
+    towerTop: 'assets/tower-top.png',
+    towerBottom: 'assets/tower-bottom.png'
+  };
+
+  function loadImage(src) {
+    const img = new Image();
+    const state = { img, loaded: false };
+    img.onload = () => { state.loaded = true; };
+    img.onerror = () => { state.loaded = false; };
+    img.src = src;
+    return state;
+  }
+
+  const planeAsset = loadImage(ASSET_PATHS.plane);
+  const towerTopAsset = loadImage(ASSET_PATHS.towerTop);
+  const towerBottomAsset = loadImage(ASSET_PATHS.towerBottom);
+
   // ---------- Audio (simple WebAudio synthesized SFX) ----------
   let audioCtx = null;
   function ensureAudio() {
@@ -393,7 +415,7 @@
     ctx.restore();
   }
 
-  function drawTower(t) {
+  function drawTowerVector(t) {
     const gapTop = t.gapY - t.gapH / 2;
     const gapBottom = t.gapY + t.gapH / 2;
     const capH = Math.min(28, t.width * 0.35);
@@ -432,7 +454,38 @@
     }
   }
 
-  function drawPlane() {
+  function drawTower(t) {
+    const gapTop = t.gapY - t.gapH / 2;
+    const gapBottom = t.gapY + t.gapH / 2;
+
+    const topReady = towerTopAsset.loaded && towerTopAsset.img.naturalWidth > 0;
+    const bottomReady = towerBottomAsset.loaded && towerBottomAsset.img.naturalWidth > 0;
+
+    if (!topReady && !bottomReady) {
+      drawTowerVector(t);
+      return;
+    }
+
+    // Top tower: image's natural top sits at the screen's top edge,
+    // stretched down to the gap.
+    if (topReady) {
+      ctx.drawImage(towerTopAsset.img, t.x, 0, t.width, gapTop);
+    } else {
+      ctx.fillStyle = '#8b8f92';
+      ctx.fillRect(t.x, 0, t.width, gapTop);
+    }
+
+    // Bottom tower: image's natural top sits right at the gap edge,
+    // stretched down to the screen's bottom edge.
+    if (bottomReady) {
+      ctx.drawImage(towerBottomAsset.img, t.x, gapBottom, t.width, H - gapBottom);
+    } else {
+      ctx.fillStyle = '#8b8f92';
+      ctx.fillRect(t.x, gapBottom, t.width, H - gapBottom);
+    }
+  }
+
+  function drawPlaneVector() {
     const size = W * PLANE_SIZE;
     ctx.save();
     ctx.translate(plane.x, plane.y);
@@ -504,6 +557,27 @@
     ctx.ellipse(size * 1.0, 0, size * 0.02, size * 0.24, 0, 0, Math.PI * 2);
     ctx.stroke();
 
+    ctx.restore();
+  }
+
+  function drawPlane() {
+    const planeReady = planeAsset.loaded && planeAsset.img.naturalWidth > 0;
+    if (!planeReady) {
+      drawPlaneVector();
+      return;
+    }
+    const img = planeAsset.img;
+    const size = W * PLANE_SIZE;
+    // Fit the image inside a box roughly matching the vector plane's footprint,
+    // preserving its own aspect ratio (assumes the artwork faces right, nose right).
+    const aspect = img.naturalWidth / img.naturalHeight;
+    const drawW = size * 2.0;
+    const drawH = drawW / aspect;
+
+    ctx.save();
+    ctx.translate(plane.x, plane.y);
+    ctx.rotate(plane.rotation);
+    ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
   }
 
