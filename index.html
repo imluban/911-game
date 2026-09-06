@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tower Dodge — Fly Between the Towers</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Score (visible during gameplay) -->
+    <div id="scoreHud" class="hidden">0</div>
+
+    <!-- Start Screen -->
+    <div id="startScreen" class="overlay">
+      <h1 class="title">TOWER DODGE</h1>
+      <p class="subtitle">Fly your plane through the gap</p>
+      <p class="prompt">Click / Tap / Press Space to Start</p>
+      <p class="best-line">Best: <span id="bestScoreStart">0</span></p>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="gameOverScreen" class="overlay hidden">
+      <h1 class="crash-title" id="crashMessage">Damn, You Hit The Third Tower!</h1>
+      <div class="score-box">
+        <p>Score: <span id="finalScore">0</span></p>
+        <p>Best: <span id="bestScoreEnd">0</span></p>
+      </div>
+      <button id="retryBtn">Let's Hit Again</button>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
