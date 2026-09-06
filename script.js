@@ -237,6 +237,8 @@
   });
 
   function onPointerDown(e) {
+    // Don't hijack clicks/taps on the retry button — it has its own handler.
+    if (retryBtn.contains(e.target)) return;
     e.preventDefault();
     if (state === 'playing') {
       setHolding(true);
@@ -245,13 +247,15 @@
     }
   }
   function onPointerUp(e) {
-    e.preventDefault();
+    if (retryBtn.contains(e.target)) return;
     setHolding(false);
   }
 
-  canvas.addEventListener('mousedown', onPointerDown);
+  // Attached to window (not just the canvas) so taps/clicks still register
+  // even while the start/game-over overlay divs are sitting on top of the canvas.
+  window.addEventListener('mousedown', onPointerDown);
   window.addEventListener('mouseup', onPointerUp);
-  canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+  window.addEventListener('touchstart', onPointerDown, { passive: false });
   window.addEventListener('touchend', onPointerUp, { passive: false });
   window.addEventListener('blur', () => setHolding(false));
 
