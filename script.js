@@ -173,45 +173,105 @@
   let explosionTimer = 0;
   let shakeTime = 0;
   let pendingCrashTowerNumber = 1;
-  const EXPLOSION_DURATION = 0.85; // seconds the blast plays before the Game Over screen appears
-  const SHAKE_DURATION = 0.35;
-  const SHAKE_MAGNITUDE = 14; // px
+  let crashOriginX = 0, crashOriginY = 0;
+  const EXPLOSION_DURATION = 1.1; // seconds the blast plays before the Game Over screen appears
+  const SHAKE_DURATION = 0.4;
+  const SHAKE_MAGNITUDE = 16; // px
 
-  const SPARK_COLORS = ['#fff3b0', '#ffd166', '#ff9f43', '#ff6b35', '#e8432c'];
+  // Color ramp a fire particle passes through as it cools, white-hot -> ember -> soot.
+  const FIRE_RAMP = [
+    { t: 0.0, c: [255, 250, 220] },
+    { t: 0.18, c: [255, 214, 120] },
+    { t: 0.4, c: [255, 140, 40] },
+    { t: 0.7, c: [200, 60, 20] },
+    { t: 1.0, c: [40, 20, 15] }
+  ];
+  function fireColorAt(t) {
+    for (let i = 0; i < FIRE_RAMP.length - 1; i++) {
+      const a = FIRE_RAMP[i], b = FIRE_RAMP[i + 1];
+      if (t >= a.t && t <= b.t) {
+        const localT = (t - a.t) / (b.t - a.t || 1);
+        const r = a.c[0] + (b.c[0] - a.c[0]) * localT;
+        const g = a.c[1] + (b.c[1] - a.c[1]) * localT;
+        const bch = a.c[2] + (b.c[2] - a.c[2]) * localT;
+        return `rgb(${r | 0},${g | 0},${bch | 0})`;
+      }
+    }
+    return 'rgb(40,20,15)';
+  }
 
   function spawnExplosion(x, y) {
     particles = [];
+    crashOriginX = x;
+    crashOriginY = y;
 
-    // Fiery sparks — quick, bright, arc under gravity
-    const sparkCount = 26;
+    // Dense core fireball puffs — additive-blended, drive the "real fire" look.
+    const fireCount = 22;
+    for (let i = 0; i < fireCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 30 + Math.random() * 170;
+      particles.push({
+        type: 'fire',
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 40,
+        size: 14 + Math.random() * 22,
+        drag: 2.2,
+        age: 0,
+        life: 0.5 + Math.random() * 0.45
+      });
+    }
+
+    // Sharp hot sparks / shrapnel — small, fast, arc under gravity, trail briefly.
+    const sparkCount = 20;
     for (let i = 0; i < sparkCount; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 140 + Math.random() * 340;
+      const speed = 220 + Math.random() * 380;
       particles.push({
         type: 'spark',
         x, y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        size: 2 + Math.random() * 3.5,
-        color: SPARK_COLORS[(Math.random() * SPARK_COLORS.length) | 0],
+        size: 1.2 + Math.random() * 1.8,
         age: 0,
-        life: 0.35 + Math.random() * 0.35
+        life: 0.4 + Math.random() * 0.5
       });
     }
 
-    // Smoke puffs — slower, drift upward, expand and fade
-    const smokeCount = 12;
+    // Tumbling dark debris chunks (concrete/metal shards) — normal-blended, real gravity.
+    const debrisCount = 10;
+    for (let i = 0; i < debrisCount; i++) {
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.2;
+      const speed = 120 + Math.random() * 260;
+      particles.push({
+        type: 'debris',
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        w: 3 + Math.random() * 6,
+        h: 2 + Math.random() * 5,
+        rot: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 14,
+        shade: 40 + Math.random() * 60,
+        age: 0,
+        life: 0.9 + Math.random() * 0.6
+      });
+    }
+
+    // Billowing soot smoke — slow, dark, expands and rises well after the flash fades.
+    const smokeCount = 14;
     for (let i = 0; i < smokeCount; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 20 + Math.random() * 70;
+      const speed = 15 + Math.random() * 55;
       particles.push({
         type: 'smoke',
-        x, y,
-        vx: Math.cos(angle) * speed * 0.5,
-        vy: Math.sin(angle) * speed * 0.5 - 30,
-        size: 8 + Math.random() * 10,
-        age: 0,
-        life: 0.6 + Math.random() * 0.5
+        x: x + (Math.random() - 0.5) * 20,
+        y: y + (Math.random() - 0.5) * 20,
+        vx: Math.cos(angle) * speed * 0.4,
+        vy: Math.sin(angle) * speed * 0.4 - 22,
+        size: 10 + Math.random() * 14,
+        age: Math.random() * 0.15,
+        life: 1.0 + Math.random() * 0.7
       });
     }
   }
@@ -224,15 +284,24 @@
       p.age += dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      if (p.type === 'spark') {
-        p.vy += 900 * dt; // gravity arc
-        p.vx *= (1 - 1.5 * dt);
-      } else {
-        p.vy -= 25 * dt; // smoke keeps drifting up
-        p.size += 26 * dt; // expands as it fades
+      if (p.type === 'fire') {
+        p.vx *= Math.max(0, 1 - p.drag * dt);
+        p.vy *= Math.max(0, 1 - p.drag * dt);
+        p.vy -= 55 * dt; // hot gas rises
+      } else if (p.type === 'spark') {
+        p.vy += 780 * dt; // gravity arc
+        p.vx *= (1 - 1.2 * dt);
+      } else if (p.type === 'debris') {
+        p.vy += 640 * dt;
+        p.vx *= (1 - 0.5 * dt);
+        p.rot += p.rotSpeed * dt;
+      } else { // smoke
+        p.vy -= 18 * dt;
+        p.size += 22 * dt;
       }
     }
     particles = particles.filter(p => p.age < p.life);
+    updateFallingTowers(dt);
 
     if (explosionTimer >= EXPLOSION_DURATION) {
       finalizeGameOver(pendingCrashTowerNumber);
@@ -240,40 +309,86 @@
   }
 
   function drawExplosion() {
+    // --- Soot smoke first (sits behind the fire, drawn normally so it reads dark) ---
     for (const p of particles) {
+      if (p.type !== 'smoke') continue;
+      const t = p.age / p.life;
+      const alpha = Math.max(0, (1 - t) * 0.45);
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+      grad.addColorStop(0, `rgba(55,50,48,${alpha})`);
+      grad.addColorStop(1, `rgba(55,50,48,0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // --- Fireball + sparks, additive blend for a genuine hot-glow look ---
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (const p of particles) {
+      if (p.type !== 'fire') continue;
+      const t = Math.min(1, p.age / p.life);
+      const alpha = Math.max(0, 1 - t * t);
+      const size = p.size * (1 - t * 0.3);
+      const color = fireColorAt(t);
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size);
+      grad.addColorStop(0, color.replace('rgb', 'rgba').replace(')', `,${alpha})`));
+      grad.addColorStop(1, color.replace('rgb', 'rgba').replace(')', ',0)'));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    for (const p of particles) {
+      if (p.type !== 'spark') continue;
+      const t = p.age / p.life;
+      const alpha = Math.max(0, 1 - t);
+      const color = fireColorAt(Math.min(1, t * 1.3));
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = p.size;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x - p.vx * 0.02, p.y - p.vy * 0.02);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Central flash + shockwave ring, brief and additive
+    const flashT = explosionTimer / 0.16;
+    if (flashT < 1) {
+      const glow = ctx.createRadialGradient(crashOriginX, crashOriginY, 0, crashOriginX, crashOriginY, 90);
+      glow.addColorStop(0, `rgba(255,250,225,${(1 - flashT) * 0.9})`);
+      glow.addColorStop(1, 'rgba(255,250,225,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(crashOriginX, crashOriginY, 90, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const shockT = explosionTimer / 0.45;
+    if (shockT < 1) {
+      ctx.strokeStyle = `rgba(255,220,160,${(1 - shockT) * 0.5})`;
+      ctx.lineWidth = 4 * (1 - shockT) + 1;
+      ctx.beginPath();
+      ctx.arc(crashOriginX, crashOriginY, 20 + shockT * 130, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // --- Dark tumbling debris on top, normal blend so it reads as solid matter ---
+    for (const p of particles) {
+      if (p.type !== 'debris') continue;
       const t = p.age / p.life;
       const alpha = Math.max(0, 1 - t);
       ctx.save();
-      if (p.type === 'spark') {
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = p.color;
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 8;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * (1 - t * 0.4), 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.globalAlpha = alpha * 0.5;
-        ctx.fillStyle = '#5a5a5a';
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    // quick bright flash at the very start of the blast
-    const flashT = explosionTimer / 0.18;
-    if (flashT < 1) {
-      ctx.save();
-      ctx.globalAlpha = (1 - flashT) * 0.55;
-      ctx.fillStyle = '#fff3b0';
-      const r = 40 + flashT * 70;
-      const cx = particles.length ? particles[0].x : plane.x;
-      const cy = particles.length ? particles[0].y : plane.y;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.globalAlpha = alpha;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = `rgb(${p.shade | 0},${p.shade | 0},${p.shade | 0})`;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
       ctx.restore();
     }
   }
@@ -336,8 +451,30 @@
       width: towerWidth,
       gapY: gapY,
       gapH: gapH,
-      passed: false
+      passed: false,
+      topFalling: false,
+      topFallAngle: 0,
+      topFallAngVel: 0,
+      bottomFalling: false,
+      bottomFallAngle: 0,
+      bottomFallAngVel: 0
     });
+  }
+
+  const TOWER_FALL_ANG_ACCEL = 2.8; // rad/s^2 — how fast the toppling pillar accelerates
+  const TOWER_FALL_MAX_ANGLE = 1.45; // rad (~83°) — stops just short of fully flat
+
+  function updateFallingTowers(dt) {
+    for (const t of towers) {
+      if (t.topFalling && t.topFallAngle < TOWER_FALL_MAX_ANGLE) {
+        t.topFallAngVel += TOWER_FALL_ANG_ACCEL * dt;
+        t.topFallAngle = Math.min(TOWER_FALL_MAX_ANGLE, t.topFallAngle + t.topFallAngVel * dt);
+      }
+      if (t.bottomFalling && t.bottomFallAngle < TOWER_FALL_MAX_ANGLE) {
+        t.bottomFallAngVel += TOWER_FALL_ANG_ACCEL * dt;
+        t.bottomFallAngle = Math.min(TOWER_FALL_MAX_ANGLE, t.bottomFallAngle + t.bottomFallAngVel * dt);
+      }
+    }
   }
 
   // ---------- Input ----------
@@ -415,7 +552,7 @@
     startWind();
   }
 
-  function triggerCrash(hitTowerIndex) {
+  function triggerCrash(hitTowerIndex, hitTower, hitPiece) {
     state = 'exploding';
     pendingCrashTowerNumber = hitTowerIndex;
     explosionTimer = 0;
@@ -424,6 +561,12 @@
     stopWind();
     sfxCrash();
     scoreHud.classList.add('hidden');
+
+    if (hitTower && hitPiece === 'top') {
+      hitTower.topFalling = true;
+    } else if (hitTower && hitPiece === 'bottom') {
+      hitTower.bottomFalling = true;
+    }
   }
 
   function finalizeGameOver(hitTowerIndex) {
@@ -513,7 +656,8 @@
         const gapBottom = t.gapY + t.gapH / 2;
         if (planeTop < gapTop || planeBottom > gapBottom) {
           const towerHitNumber = towers.filter(tt => tt.passed).length + 1;
-          triggerCrash(towerHitNumber);
+          const hitPiece = planeTop < gapTop ? 'top' : 'bottom';
+          triggerCrash(towerHitNumber, t, hitPiece);
           return;
         }
       }
@@ -543,41 +687,37 @@
     ctx.restore();
   }
 
-  function drawTowerVector(t) {
-    const gapTop = t.gapY - t.gapH / 2;
-    const gapBottom = t.gapY + t.gapH / 2;
-    const capH = Math.min(28, t.width * 0.35);
+  // Draws one tower piece (top or bottom half) as flat concrete, relative to (0,0).
+  // isTopPiece: true = hangs from y=0 down to h; false = rises from y=-h up to 0.
+  function drawTowerPieceVector(w, h, isTopPiece) {
+    const capH = Math.min(28, w * 0.35);
+    const y0 = isTopPiece ? 0 : -h;
 
-    // Concrete gradient
-    const grad = ctx.createLinearGradient(t.x, 0, t.x + t.width, 0);
+    const grad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
     grad.addColorStop(0, '#8b8f92');
     grad.addColorStop(0.15, '#c7cbcd');
     grad.addColorStop(0.5, '#a9adb0');
     grad.addColorStop(0.85, '#8b8f92');
     grad.addColorStop(1, '#75797c');
-
-    // Top tower
     ctx.fillStyle = grad;
-    ctx.fillRect(t.x, 0, t.width, gapTop);
-    // Bottom tower
-    ctx.fillRect(t.x, gapBottom, t.width, H - gapBottom);
+    ctx.fillRect(-w / 2, y0, w, h);
 
-    // Caps (slightly darker, protruding lip near the gap edges)
+    // Cap sits at the free end (the end nearest the gap)
     ctx.fillStyle = '#6d7174';
-    ctx.fillRect(t.x - 4, Math.max(0, gapTop - capH), t.width + 8, capH);
-    ctx.fillRect(t.x - 4, gapBottom, t.width + 8, capH);
+    if (isTopPiece) {
+      ctx.fillRect(-w / 2 - 4, h - capH, w + 8, capH);
+    } else {
+      ctx.fillRect(-w / 2 - 4, -h, w + 8, capH);
+    }
 
-    // Subtle vertical panel lines for concrete texture
     ctx.strokeStyle = 'rgba(0,0,0,0.08)';
     ctx.lineWidth = 1;
     const lines = 3;
     for (let i = 1; i < lines; i++) {
-      const lx = t.x + (t.width / lines) * i;
+      const lx = -w / 2 + (w / lines) * i;
       ctx.beginPath();
-      ctx.moveTo(lx, 0);
-      ctx.lineTo(lx, gapTop);
-      ctx.moveTo(lx, gapBottom);
-      ctx.lineTo(lx, H);
+      ctx.moveTo(lx, y0);
+      ctx.lineTo(lx, y0 + h);
       ctx.stroke();
     }
   }
@@ -585,32 +725,40 @@
   function drawTower(t) {
     const gapTop = t.gapY - t.gapH / 2;
     const gapBottom = t.gapY + t.gapH / 2;
+    const topH = gapTop;
+    const bottomH = H - gapBottom;
+    const cx = t.x + t.width / 2;
 
     const topReady = towerTopAsset.loaded && towerTopAsset.img.naturalWidth > 0;
     const bottomReady = towerBottomAsset.loaded && towerBottomAsset.img.naturalWidth > 0;
 
-    if (!topReady && !bottomReady) {
-      drawTowerVector(t);
-      return;
-    }
-
-    // Top tower: image's natural top sits at the screen's top edge,
-    // stretched down to the gap.
-    if (topReady) {
-      ctx.drawImage(towerTopAsset.img, t.x, 0, t.width, gapTop);
+    // TOP PIECE — normally anchored flat against the ceiling; if struck, it
+    // topples by rotating around its fixed top-center pivot.
+    ctx.save();
+    if (t.topFalling) {
+      ctx.translate(cx, 0);
+      ctx.rotate(t.topFallAngle);
+      if (topReady) ctx.drawImage(towerTopAsset.img, -t.width / 2, 0, t.width, topH);
+      else drawTowerPieceVector(t.width, topH, true);
     } else {
-      ctx.fillStyle = '#8b8f92';
-      ctx.fillRect(t.x, 0, t.width, gapTop);
+      if (topReady) ctx.drawImage(towerTopAsset.img, t.x, 0, t.width, topH);
+      else { ctx.translate(cx, 0); drawTowerPieceVector(t.width, topH, true); }
     }
+    ctx.restore();
 
-    // Bottom tower: image's natural top sits right at the gap edge,
-    // stretched down to the screen's bottom edge.
-    if (bottomReady) {
-      ctx.drawImage(towerBottomAsset.img, t.x, gapBottom, t.width, H - gapBottom);
+    // BOTTOM PIECE — anchored flat on the ground; if struck, topples around
+    // its fixed bottom-center pivot.
+    ctx.save();
+    if (t.bottomFalling) {
+      ctx.translate(cx, H);
+      ctx.rotate(t.bottomFallAngle);
+      if (bottomReady) ctx.drawImage(towerBottomAsset.img, -t.width / 2, -bottomH, t.width, bottomH);
+      else drawTowerPieceVector(t.width, bottomH, false);
     } else {
-      ctx.fillStyle = '#8b8f92';
-      ctx.fillRect(t.x, gapBottom, t.width, H - gapBottom);
+      if (bottomReady) ctx.drawImage(towerBottomAsset.img, t.x, gapBottom, t.width, bottomH);
+      else { ctx.translate(cx, H); drawTowerPieceVector(t.width, bottomH, false); }
     }
+    ctx.restore();
   }
 
   function drawPlaneVector() {
@@ -770,6 +918,8 @@
       update(dt);
     } else if (state === 'exploding') {
       updateExplosion(dt);
+    } else if (state === 'gameover') {
+      updateFallingTowers(dt); // let the toppled pillar keep settling behind the UI
     }
     draw();
 
