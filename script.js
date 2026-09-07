@@ -161,12 +161,122 @@
   }
 
   // ---------- Game state ----------
-  let state = 'start'; // 'start' | 'playing' | 'gameover'
+  let state = 'start'; // 'start' | 'playing' | 'exploding' | 'gameover'
   let plane, towers, score, elapsed, spawnTimer, holding, lastTime;
   let clouds = [];
   let skylineScrollX = 0;
   const SKYLINE_PARALLAX = 0.35; // scrolls slower than towers for a depth feel
   const SKYLINE_HEIGHT_RATIO = 0.16; // band height relative to screen height
+
+  // ---------- Crash / blast effect ----------
+  let particles = [];
+  let explosionTimer = 0;
+  let shakeTime = 0;
+  let pendingCrashTowerNumber = 1;
+  const EXPLOSION_DURATION = 0.85; // seconds the blast plays before the Game Over screen appears
+  const SHAKE_DURATION = 0.35;
+  const SHAKE_MAGNITUDE = 14; // px
+
+  const SPARK_COLORS = ['#fff3b0', '#ffd166', '#ff9f43', '#ff6b35', '#e8432c'];
+
+  function spawnExplosion(x, y) {
+    particles = [];
+
+    // Fiery sparks — quick, bright, arc under gravity
+    const sparkCount = 26;
+    for (let i = 0; i < sparkCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 140 + Math.random() * 340;
+      particles.push({
+        type: 'spark',
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        size: 2 + Math.random() * 3.5,
+        color: SPARK_COLORS[(Math.random() * SPARK_COLORS.length) | 0],
+        age: 0,
+        life: 0.35 + Math.random() * 0.35
+      });
+    }
+
+    // Smoke puffs — slower, drift upward, expand and fade
+    const smokeCount = 12;
+    for (let i = 0; i < smokeCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 20 + Math.random() * 70;
+      particles.push({
+        type: 'smoke',
+        x, y,
+        vx: Math.cos(angle) * speed * 0.5,
+        vy: Math.sin(angle) * speed * 0.5 - 30,
+        size: 8 + Math.random() * 10,
+        age: 0,
+        life: 0.6 + Math.random() * 0.5
+      });
+    }
+  }
+
+  function updateExplosion(dt) {
+    explosionTimer += dt;
+    if (shakeTime > 0) shakeTime = Math.max(0, shakeTime - dt);
+
+    for (const p of particles) {
+      p.age += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.type === 'spark') {
+        p.vy += 900 * dt; // gravity arc
+        p.vx *= (1 - 1.5 * dt);
+      } else {
+        p.vy -= 25 * dt; // smoke keeps drifting up
+        p.size += 26 * dt; // expands as it fades
+      }
+    }
+    particles = particles.filter(p => p.age < p.life);
+
+    if (explosionTimer >= EXPLOSION_DURATION) {
+      finalizeGameOver(pendingCrashTowerNumber);
+    }
+  }
+
+  function drawExplosion() {
+    for (const p of particles) {
+      const t = p.age / p.life;
+      const alpha = Math.max(0, 1 - t);
+      ctx.save();
+      if (p.type === 'spark') {
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (1 - t * 0.4), 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.globalAlpha = alpha * 0.5;
+        ctx.fillStyle = '#5a5a5a';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // quick bright flash at the very start of the blast
+    const flashT = explosionTimer / 0.18;
+    if (flashT < 1) {
+      ctx.save();
+      ctx.globalAlpha = (1 - flashT) * 0.55;
+      ctx.fillStyle = '#fff3b0';
+      const r = 40 + flashT * 70;
+      const cx = particles.length ? particles[0].x : plane.x;
+      const cy = particles.length ? particles[0].y : plane.y;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
 
   function initClouds() {
     clouds = [];
@@ -199,6 +309,9 @@
     scoreHud.textContent = '0';
     initClouds();
     skylineScrollX = 0;
+    particles = [];
+    explosionTimer = 0;
+    shakeTime = 0;
   }
 
   function currentSpeed() {
@@ -302,11 +415,19 @@
     startWind();
   }
 
-  function endGame(hitTowerIndex) {
-    state = 'gameover';
+  function triggerCrash(hitTowerIndex) {
+    state = 'exploding';
+    pendingCrashTowerNumber = hitTowerIndex;
+    explosionTimer = 0;
+    shakeTime = SHAKE_DURATION;
+    spawnExplosion(plane.x, plane.y);
     stopWind();
     sfxCrash();
     scoreHud.classList.add('hidden');
+  }
+
+  function finalizeGameOver(hitTowerIndex) {
+    state = 'gameover';
     finalScoreEl.textContent = score;
     if (score > bestScore) {
       bestScore = score;
@@ -369,7 +490,7 @@
     // Ground/ceiling bounds
     if (plane.y - planeR < 0 || plane.y + planeR > H) {
       const towerHitNumber = towers.filter(t => t.passed).length + 1;
-      endGame(towerHitNumber);
+      triggerCrash(towerHitNumber);
       return;
     }
 
@@ -392,7 +513,7 @@
         const gapBottom = t.gapY + t.gapH / 2;
         if (planeTop < gapTop || planeBottom > gapBottom) {
           const towerHitNumber = towers.filter(tt => tt.passed).length + 1;
-          endGame(towerHitNumber);
+          triggerCrash(towerHitNumber);
           return;
         }
       }
@@ -608,12 +729,25 @@
   }
 
   function draw() {
+    ctx.save();
+    if (state === 'exploding' && shakeTime > 0) {
+      const shakeAmt = (shakeTime / SHAKE_DURATION) * SHAKE_MAGNITUDE;
+      ctx.translate((Math.random() * 2 - 1) * shakeAmt, (Math.random() * 2 - 1) * shakeAmt);
+    }
+
     drawSky();
     drawSkyline();
     for (const c of clouds) drawCloud(c);
-    if (state === 'playing' || state === 'gameover') {
+
+    if (state === 'playing') {
       for (const t of towers) drawTower(t);
       drawPlane();
+    } else if (state === 'exploding') {
+      for (const t of towers) drawTower(t);
+      drawExplosion();
+    } else if (state === 'gameover') {
+      for (const t of towers) drawTower(t);
+      // plane has been destroyed — nothing drawn in its place once the blast finishes
     } else {
       // Idle preview plane on start screen
       if (!plane) {
@@ -623,6 +757,8 @@
       plane.y = H * 0.45 + Math.sin(performance.now() / 600) * 14;
       drawPlane();
     }
+
+    ctx.restore();
   }
 
   // ---------- Main loop ----------
@@ -632,6 +768,8 @@
 
     if (state === 'playing') {
       update(dt);
+    } else if (state === 'exploding') {
+      updateExplosion(dt);
     }
     draw();
 
