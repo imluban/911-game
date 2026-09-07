@@ -276,10 +276,7 @@
     }
   }
 
-  function updateExplosion(dt) {
-    explosionTimer += dt;
-    if (shakeTime > 0) shakeTime = Math.max(0, shakeTime - dt);
-
+  function updateParticles(dt) {
     for (const p of particles) {
       p.age += dt;
       p.x += p.vx * dt;
@@ -301,6 +298,12 @@
       }
     }
     particles = particles.filter(p => p.age < p.life);
+  }
+
+  function updateExplosion(dt) {
+    explosionTimer += dt;
+    if (shakeTime > 0) shakeTime = Math.max(0, shakeTime - dt);
+    updateParticles(dt);
     updateFallingTowers(dt);
 
     if (explosionTimer >= EXPLOSION_DURATION) {
@@ -453,26 +456,60 @@
       gapH: gapH,
       passed: false,
       topFalling: false,
-      topFallAngle: 0,
-      topFallAngVel: 0,
+      topCollapseT: 0,
+      topSmokeTimer: 0,
       bottomFalling: false,
-      bottomFallAngle: 0,
-      bottomFallAngVel: 0
+      bottomCollapseT: 0,
+      bottomSmokeTimer: 0
     });
   }
 
-  const TOWER_FALL_ANG_ACCEL = 2.8; // rad/s^2 — how fast the toppling pillar accelerates
-  const TOWER_FALL_MAX_ANGLE = 1.45; // rad (~83°) — stops just short of fully flat
+  const COLLAPSE_DURATION = 1.0; // seconds for a hit pillar to fully crumble away
+  const BIG_SMOKE_INTERVAL = 0.11; // seconds between extra dust puffs while collapsing
+
+  function collapseEase(t) {
+    const p = Math.min(1, t / COLLAPSE_DURATION);
+    return Math.pow(p, 1.6); // slow to start, then gives way fast — like real structural failure
+  }
+
+  function spawnBigSmokePuff(x, y) {
+    particles.push({
+      type: 'smoke',
+      x: x + (Math.random() - 0.5) * 34,
+      y: y + (Math.random() - 0.5) * 16,
+      vx: (Math.random() - 0.5) * 16,
+      vy: -16 - Math.random() * 24,
+      size: 26 + Math.random() * 32,
+      age: 0,
+      life: 1.3 + Math.random() * 1.0
+    });
+  }
 
   function updateFallingTowers(dt) {
     for (const t of towers) {
-      if (t.topFalling && t.topFallAngle < TOWER_FALL_MAX_ANGLE) {
-        t.topFallAngVel += TOWER_FALL_ANG_ACCEL * dt;
-        t.topFallAngle = Math.min(TOWER_FALL_MAX_ANGLE, t.topFallAngle + t.topFallAngVel * dt);
+      const gapTop = t.gapY - t.gapH / 2;
+      const gapBottom = t.gapY + t.gapH / 2;
+      const topH = gapTop;
+      const bottomH = H - gapBottom;
+      const cx = t.x + t.width / 2;
+
+      if (t.topFalling && t.topCollapseT < COLLAPSE_DURATION) {
+        t.topCollapseT += dt;
+        t.topSmokeTimer -= dt;
+        if (t.topSmokeTimer <= 0) {
+          t.topSmokeTimer = BIG_SMOKE_INTERVAL;
+          const visH = topH * (1 - collapseEase(t.topCollapseT));
+          spawnBigSmokePuff(cx + (Math.random() - 0.5) * t.width * 0.7, visH);
+        }
       }
-      if (t.bottomFalling && t.bottomFallAngle < TOWER_FALL_MAX_ANGLE) {
-        t.bottomFallAngVel += TOWER_FALL_ANG_ACCEL * dt;
-        t.bottomFallAngle = Math.min(TOWER_FALL_MAX_ANGLE, t.bottomFallAngle + t.bottomFallAngVel * dt);
+      if (t.bottomFalling && t.bottomCollapseT < COLLAPSE_DURATION) {
+        t.bottomCollapseT += dt;
+        t.bottomSmokeTimer -= dt;
+        if (t.bottomSmokeTimer <= 0) {
+          t.bottomSmokeTimer = BIG_SMOKE_INTERVAL;
+          const visH = bottomH * (1 - collapseEase(t.bottomCollapseT));
+          spawnBigSmokePuff(cx + (Math.random() - 0.5) * t.width * 0.7, H - visH);
+        }
       }
     }
   }
@@ -564,8 +601,22 @@
 
     if (hitTower && hitPiece === 'top') {
       hitTower.topFalling = true;
+      hitTower.topCollapseT = 0;
+      hitTower.topSmokeTimer = 0;
+      const gapTop = hitTower.gapY - hitTower.gapH / 2;
+      const cx = hitTower.x + hitTower.width / 2;
+      for (let i = 0; i < 9; i++) {
+        spawnBigSmokePuff(cx + (Math.random() - 0.5) * hitTower.width, gapTop);
+      }
     } else if (hitTower && hitPiece === 'bottom') {
       hitTower.bottomFalling = true;
+      hitTower.bottomCollapseT = 0;
+      hitTower.bottomSmokeTimer = 0;
+      const gapBottom = hitTower.gapY + hitTower.gapH / 2;
+      const cx = hitTower.x + hitTower.width / 2;
+      for (let i = 0; i < 9; i++) {
+        spawnBigSmokePuff(cx + (Math.random() - 0.5) * hitTower.width, gapBottom);
+      }
     }
   }
 
@@ -687,37 +738,35 @@
     ctx.restore();
   }
 
-  // Draws one tower piece (top or bottom half) as flat concrete, relative to (0,0).
-  // isTopPiece: true = hangs from y=0 down to h; false = rises from y=-h up to 0.
-  function drawTowerPieceVector(w, h, isTopPiece) {
+  // Draws one tower piece (top or bottom half) as flat concrete, in absolute canvas coords.
+  function drawTowerPieceVector(x, y, w, h, isTopPiece) {
     const capH = Math.min(28, w * 0.35);
-    const y0 = isTopPiece ? 0 : -h;
 
-    const grad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+    const grad = ctx.createLinearGradient(x, 0, x + w, 0);
     grad.addColorStop(0, '#8b8f92');
     grad.addColorStop(0.15, '#c7cbcd');
     grad.addColorStop(0.5, '#a9adb0');
     grad.addColorStop(0.85, '#8b8f92');
     grad.addColorStop(1, '#75797c');
     ctx.fillStyle = grad;
-    ctx.fillRect(-w / 2, y0, w, h);
+    ctx.fillRect(x, y, w, h);
 
     // Cap sits at the free end (the end nearest the gap)
     ctx.fillStyle = '#6d7174';
     if (isTopPiece) {
-      ctx.fillRect(-w / 2 - 4, h - capH, w + 8, capH);
+      ctx.fillRect(x - 4, y + h - capH, w + 8, capH);
     } else {
-      ctx.fillRect(-w / 2 - 4, -h, w + 8, capH);
+      ctx.fillRect(x - 4, y, w + 8, capH);
     }
 
     ctx.strokeStyle = 'rgba(0,0,0,0.08)';
     ctx.lineWidth = 1;
     const lines = 3;
     for (let i = 1; i < lines; i++) {
-      const lx = -w / 2 + (w / lines) * i;
+      const lx = x + (w / lines) * i;
       ctx.beginPath();
-      ctx.moveTo(lx, y0);
-      ctx.lineTo(lx, y0 + h);
+      ctx.moveTo(lx, y);
+      ctx.lineTo(lx, y + h);
       ctx.stroke();
     }
   }
@@ -727,38 +776,27 @@
     const gapBottom = t.gapY + t.gapH / 2;
     const topH = gapTop;
     const bottomH = H - gapBottom;
-    const cx = t.x + t.width / 2;
 
     const topReady = towerTopAsset.loaded && towerTopAsset.img.naturalWidth > 0;
     const bottomReady = towerBottomAsset.loaded && towerBottomAsset.img.naturalWidth > 0;
 
-    // TOP PIECE — normally anchored flat against the ceiling; if struck, it
-    // topples by rotating around its fixed top-center pivot.
-    ctx.save();
-    if (t.topFalling) {
-      ctx.translate(cx, 0);
-      ctx.rotate(t.topFallAngle);
-      if (topReady) ctx.drawImage(towerTopAsset.img, -t.width / 2, 0, t.width, topH);
-      else drawTowerPieceVector(t.width, topH, true);
-    } else {
-      if (topReady) ctx.drawImage(towerTopAsset.img, t.x, 0, t.width, topH);
-      else { ctx.translate(cx, 0); drawTowerPieceVector(t.width, topH, true); }
+    // TOP PIECE — stays pinned to the ceiling. If struck, it doesn't tip
+    // sideways: it crumbles straight down, shrinking from its free (lower)
+    // end until nothing's left, revealing open sky.
+    const topVisH = t.topFalling ? topH * (1 - collapseEase(t.topCollapseT)) : topH;
+    if (topVisH > 0.5) {
+      if (topReady) ctx.drawImage(towerTopAsset.img, t.x, 0, t.width, topVisH);
+      else drawTowerPieceVector(t.x, 0, t.width, topVisH, true);
     }
-    ctx.restore();
 
-    // BOTTOM PIECE — anchored flat on the ground; if struck, topples around
-    // its fixed bottom-center pivot.
-    ctx.save();
-    if (t.bottomFalling) {
-      ctx.translate(cx, H);
-      ctx.rotate(t.bottomFallAngle);
-      if (bottomReady) ctx.drawImage(towerBottomAsset.img, -t.width / 2, -bottomH, t.width, bottomH);
-      else drawTowerPieceVector(t.width, bottomH, false);
-    } else {
-      if (bottomReady) ctx.drawImage(towerBottomAsset.img, t.x, gapBottom, t.width, bottomH);
-      else { ctx.translate(cx, H); drawTowerPieceVector(t.width, bottomH, false); }
+    // BOTTOM PIECE — stays pinned to the ground. If struck, it crumbles
+    // straight down into rubble, shrinking from its free (upper) end.
+    const bottomVisH = t.bottomFalling ? bottomH * (1 - collapseEase(t.bottomCollapseT)) : bottomH;
+    if (bottomVisH > 0.5) {
+      const y = H - bottomVisH;
+      if (bottomReady) ctx.drawImage(towerBottomAsset.img, t.x, y, t.width, bottomVisH);
+      else drawTowerPieceVector(t.x, y, t.width, bottomVisH, false);
     }
-    ctx.restore();
   }
 
   function drawPlaneVector() {
@@ -895,7 +933,7 @@
       drawExplosion();
     } else if (state === 'gameover') {
       for (const t of towers) drawTower(t);
-      // plane has been destroyed — nothing drawn in its place once the blast finishes
+      drawExplosion(); // lingering dust/debris keep fading behind the Game Over screen
     } else {
       // Idle preview plane on start screen
       if (!plane) {
@@ -919,7 +957,9 @@
     } else if (state === 'exploding') {
       updateExplosion(dt);
     } else if (state === 'gameover') {
-      updateFallingTowers(dt); // let the toppled pillar keep settling behind the UI
+      // Let the collapsing pillar and its dust keep settling behind the UI.
+      updateFallingTowers(dt);
+      updateParticles(dt);
     }
     draw();
 
