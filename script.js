@@ -4,18 +4,33 @@
   // ---------- Canvas Setup ----------
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
+  const gameContainer = document.getElementById('game-container');
 
   let DPR = Math.min(window.devicePixelRatio || 1, 2);
   let W = 0, H = 0; // CSS pixel dimensions
 
   function resizeCanvas() {
-    W = window.innerWidth;
-    H = window.innerHeight;
+    // Use the *visible* viewport, not the CSS 100vh box — on mobile browsers
+    // 100vh is sized as if the address bar were hidden, which pushes anything
+    // near the bottom of the page (like the skyline strip) off-screen behind
+    // the real, currently-visible browser chrome. Sizing everything in real
+    // pixels from JS keeps the canvas exactly matched to what's on screen.
+    const vv = window.visualViewport;
+    W = vv ? vv.width : window.innerWidth;
+    H = vv ? vv.height : window.innerHeight;
+
+    gameContainer.style.width = W + 'px';
+    gameContainer.style.height = H + 'px';
+
     canvas.width = Math.floor(W * DPR);
     canvas.height = Math.floor(H * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   }
   window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('orientationchange', resizeCanvas);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', resizeCanvas);
+  }
   resizeCanvas();
 
   // ---------- DOM refs ----------
@@ -135,13 +150,13 @@
   }
 
   // ---------- Game constants ----------
-  const GRAVITY = 1500;         // px/s^2
-  const LIFT = -3600;           // px/s^2 while holding
-  const MAX_FALL_SPEED = 620;
-  const MAX_RISE_SPEED = -520;
+  const GRAVITY = 1300;         // px/s^2
+  const LIFT = -3200;           // px/s^2 while holding
+  const MAX_FALL_SPEED = 520;
+  const MAX_RISE_SPEED = -620;
   const PLANE_X_RATIO = 0.28;   // plane's horizontal position as ratio of width
   const PLANE_SIZE = 0.052;     // plane size relative to width
-  const TOWER_WIDTH_RATIO = 0.15;
+  const TOWER_WIDTH_RATIO = 0.25;
   const BASE_GAP_RATIO = 0.32;  // gap size relative to height
   const MIN_GAP_RATIO = 0.24;
   const BASE_SPEED = 220;       // px/s scroll speed
@@ -922,19 +937,22 @@
     }
 
     drawSky();
-    drawSkyline();
     for (const c of clouds) drawCloud(c);
 
     if (state === 'playing') {
       for (const t of towers) drawTower(t);
+      drawSkyline();
       drawPlane();
     } else if (state === 'exploding') {
       for (const t of towers) drawTower(t);
+      drawSkyline();
       drawExplosion();
     } else if (state === 'gameover') {
       for (const t of towers) drawTower(t);
+      drawSkyline();
       drawExplosion(); // lingering dust/debris keep fading behind the Game Over screen
     } else {
+      drawSkyline();
       // Idle preview plane on start screen
       if (!plane) {
         plane = { x: W * PLANE_X_RATIO, y: H * 0.45, vy: 0, rotation: 0 };
