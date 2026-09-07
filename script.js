@@ -157,8 +157,8 @@
   const PLANE_X_RATIO = 0.28;   // plane's horizontal position as ratio of width
   const PLANE_SIZE = 0.052;     // plane size relative to width
   const TOWER_WIDTH_RATIO = 0.25;
-  const BASE_GAP_RATIO = 0.32;  // gap size relative to height
-  const MIN_GAP_RATIO = 0.24;
+  const BASE_GAP_RATIO = 0.42;  // gap size relative to height
+  const MIN_GAP_RATIO = 0.32;
   const BASE_SPEED = 220;       // px/s scroll speed
   const MAX_SPEED = 420;
   const SPEED_RAMP_TIME = 45;   // seconds to reach near-max speed
