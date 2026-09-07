@@ -53,6 +53,7 @@
   const planeAsset = loadImage(ASSET_PATHS.plane);
   const towerTopAsset = loadImage(ASSET_PATHS.towerTop);
   const towerBottomAsset = loadImage(ASSET_PATHS.towerBottom);
+  const skylineAsset = loadImage('assets/skyline.png');
 
   // ---------- Audio (simple WebAudio synthesized SFX) ----------
   let audioCtx = null;
@@ -163,6 +164,9 @@
   let state = 'start'; // 'start' | 'playing' | 'gameover'
   let plane, towers, score, elapsed, spawnTimer, holding, lastTime;
   let clouds = [];
+  let skylineScrollX = 0;
+  const SKYLINE_PARALLAX = 0.35; // scrolls slower than towers for a depth feel
+  const SKYLINE_HEIGHT_RATIO = 0.16; // band height relative to screen height
 
   function initClouds() {
     clouds = [];
@@ -194,6 +198,7 @@
     spawnTower(W + W * 0.3);
     scoreHud.textContent = '0';
     initClouds();
+    skylineScrollX = 0;
   }
 
   function currentSpeed() {
@@ -327,6 +332,8 @@
     plane.rotation += (targetRot - plane.rotation) * Math.min(1, dt * 8);
 
     const speed = currentSpeed();
+
+    skylineScrollX += speed * SKYLINE_PARALLAX * dt;
 
     // Move towers
     for (const t of towers) {
@@ -581,8 +588,28 @@
     ctx.restore();
   }
 
+  function drawSkyline() {
+    const img = skylineAsset.img;
+    if (!skylineAsset.loaded || img.naturalWidth === 0) return;
+
+    const bandH = H * SKYLINE_HEIGHT_RATIO;
+    const aspect = img.naturalWidth / img.naturalHeight;
+    const tileW = bandH * aspect;
+    const y = H - bandH;
+
+    // Continuous leftward tiling: figure out where the first tile should
+    // start so the repeating band has no visible seam or gap.
+    const offset = -(skylineScrollX % tileW);
+    let x = offset;
+    if (x > 0) x -= tileW;
+    for (; x < W; x += tileW) {
+      ctx.drawImage(img, x, y, tileW, bandH);
+    }
+  }
+
   function draw() {
     drawSky();
+    drawSkyline();
     for (const c of clouds) drawCloud(c);
     if (state === 'playing' || state === 'gameover') {
       for (const t of towers) drawTower(t);
